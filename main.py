@@ -450,6 +450,7 @@ def cancel_deletion(call):
 @bot.message_handler(commands=['deadlines'])
 def deadlines(message):
     '''lists all tasks with status "undone" and the deadline more or equal to today'''
+
     chat_id = message.chat.id
     tasks = tasks_collection.find({'chat_id': chat_id})
 
