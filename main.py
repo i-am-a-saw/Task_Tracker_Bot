@@ -2,6 +2,7 @@ import telebot
 import humanize
 from pymongo import ReturnDocument
 from telebot import types
+from telebot.apihelper import send_video_note
 from telebot.types import ReplyKeyboardMarkup, KeyboardButton, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram_bot_calendar import DetailedTelegramCalendar, LSTEP
 import pymongo
@@ -11,6 +12,12 @@ import schedule
 import time
 import random
 import secrets
+import asyncio
+import multiprocessing
+from notifiers import get_notifier
+import threading
+
+
 
 """
 VARIABLES:
@@ -45,10 +52,15 @@ tasks_collection = db["tasks4"]
 token = secrets.TOKEN
 bot = telebot.TeleBot(token)
 user_data = {}
+notification_mode = 0
+notif_time = ""
+
+
+user_data = {}
 
 
 def create_menu_keyboard():
-    '''creates 4 buttons in menu: "Create task", "List all tasks", "View actual deadlines","Manage notifications"'''
+    '''creates 4 buttons in menu: "Create task", "List all tasks", "View actual deadlines","Manage notifications" '''
 
     menu_keyboard = ReplyKeyboardMarkup(row_width=2, resize_keyboard=True, one_time_keyboard=False)
     menu_keyboard.add(
@@ -74,25 +86,16 @@ def send_welcome(message):
 
 @bot.message_handler(func=lambda message: True)
 def handle_menu(message):
-    '''replies to text commands, sent by user. if command is not recognizes, asks to select commend from menu'''
+    '''replies to text commands, sent by user. if command is not recognizes, asks to select command from menu'''
 
     if message.text == "📝 Create Task" or message.text == "/create_task":
-        button_calcel = telebot.types.InlineKeyboardButton(text="Cancel",
-                                                           callback_data=f'cancel|{1}')
-        keyboard = telebot.types.InlineKeyboardMarkup()
-        keyboard.add(button_calcel)
-        bot.send_message(message.chat.id, "What is the name of the task? 🚀", parse_mode="Markdown", reply_markup=keyboard)
-
-        chat_id = message.chat.id
-        bot.register_next_step_handler(message, get_task_name)
+        add_task(message)
     elif message.text == "📋 List All" or message.text == "/view_tasks":
         view_tasks(message, 0)
     elif message.text == "⏰ Deadlines" or message.text == "/deadlines":
         deadlines(message)
     elif message.text == "🔔  Manage notifications" or message.text == "/notifications":
-        bot.send_message(message.chat.id, ":", parse_mode="Markdown")
-    elif message.text == "sr":
-        set_reminder(message)
+        list_tasks_for_notification(message)
     else:
         bot.reply_to(message, "❌ Invalid option. Please select from the menu below:", reply_markup=create_menu_keyboard())
 
@@ -107,7 +110,7 @@ def add_task(message):
     '''asks the user for the name of the task and registers next function "save_task_name"'''
 
     chat_id = message.chat.id
-    user_data[chat_id] = {} # in this dict the task will be saved
+
 
     button_calcel = telebot.types.InlineKeyboardButton(text="Cancel creating",
                                                        callback_data=f'cancel_creation|{1}')
@@ -117,10 +120,11 @@ def add_task(message):
     bot.send_message(chat_id, "What is the name of the task?", reply_markup=keyboard)
     bot.register_next_step_handler(message, save_task_name)
 
-def save_task_name_(message):
+def save_task_name(message):
     '''saves tash name, then asks the user for description of the task ans registers next function "sace_task_description"'''
 
     chat_id = message.chat.id
+    user_data[chat_id] = {}  # in this dict the task will be saved
     user_data[chat_id]['task_name'] = message.text
 
     button_calcel = telebot.types.InlineKeyboardButton(text="Cancel creating",
@@ -148,6 +152,8 @@ def save_task_description(message):
 def get_task_deadline(message):
     '''creates a calendar for user to choose deadline. the calendar is edited 2 times for month and year selection'''
 
+    notification_mode = 0
+
     chat_id = message.chat.id
     now = datetime.datetime.now()
     calendar, step = DetailedTelegramCalendar(min_date=datetime.date(now.year, now.month, now.day)).build()
@@ -173,21 +179,36 @@ def edit_calendar(call):
         bot.delete_message(call.message.chat.id, call.message.message_id - 1)
         bot.delete_message(call.message.chat.id, call.message.message_id)
 
-        deadline = datetime.datetime.strptime(str(result), '%Y-%m-%d')
-        user_data[chat_id]['deadline'] = deadline
+        if notification_mode:
 
-        task = {
-            'user_id': c.from_user.id,
-            'chat_id': chat_id,
-            'task_name': user_data[chat_id]['task_name'],
-            'description': user_data[chat_id]['description'],
-            'deadline': user_data[chat_id]['deadline'],
-            'created_at': datetime.datetime.now(),
-            'done': False
-        }
-        tasks_collection.insert_one(task)
+            deadline = datetime.datetime.strptime(str(result), '%Y-%m-%d')
+            notification_time = datetime.datetime.strptime(notif_time, "%H.%M").time()
+            now = datetime.datetime.now().time()
 
-        bot.send_message(chat_id, "Task saved successfully!")
+            delay = (datetime.datetime.combine(deadline, notification_time) - datetime.datetime.combine(
+                    datetime.datetime.today(), now)).seconds
+
+            threading.Timer(delay, send_notification, args=[chat_id, "-"]).start()
+
+            bot.send_message(call.message.chat.id, f"Notification scheduled. You will receive a message at {notification_time.hour:02d}:{notification_time.minute:02d}.")
+
+
+        if not notification_mode:
+            deadline = datetime.datetime.strptime(str(result), '%Y-%m-%d')
+            user_data[chat_id]['deadline'] = deadline
+
+            task = {
+                'user_id': call.from_user.id,
+                'chat_id': chat_id,
+                'task_name': user_data[chat_id]['task_name'],
+                'description': user_data[chat_id]['description'],
+                'deadline': user_data[chat_id]['deadline'],
+                'created_at': datetime.datetime.now(),
+                'done': False
+            }
+            tasks_collection.insert_one(task)
+
+            bot.send_message(chat_id, "Task saved successfully!")
 
 @bot.callback_query_handler(func=lambda call: call.data.startswith('cancel_creation'))
 def cancel_creation(call):
@@ -203,7 +224,9 @@ def cancel_creation(call):
 
 
 
-# Section for LISTING TASKS
+# ----------------------------------------
+# Section for VIEWING TASKS
+# ----------------------------------------
 @bot.message_handler(commands=['viewtasks'])
 def view_tasks(message, today):
     '''lists all saved task for current user'''
@@ -253,7 +276,7 @@ def view_tasks(message, today):
 def mark_as_done(call):
     '''changes the status of the task, from which the call was made, to "done"'''
 
-    chat_id = message.chat.id
+    chat_id = call.message.chat.id
     message = call.message
     message_id = message.message_id
 
@@ -291,9 +314,9 @@ def mark_as_done(call):
 def mark_as_undone(call):
     '''changes the status of the task, from which the call was made, to "done"'''
 
-    chat_id = message.chat.id
-    message_id = message.message_id
+    chat_id = call.message.chat.id
     message = call.message
+    message_id = message.message_id
 
     _, deadline_flag = call.data.split('|')  # Split by the delimiter
     deadline_flag = int(deadline_flag)  # Convert to integer
@@ -445,10 +468,11 @@ def cancel_deletion(call):
 
 
 
-
-#Section for DEADLINES
+# ----------------------------------------
+# Section for DEADLINES
+# ----------------------------------------
 @bot.message_handler(commands=['deadlines'])
-def deadlines(message):
+def deadlines(message, choose_mode = 0):
     '''lists all tasks with status "undone" and the deadline more or equal to today'''
 
     chat_id = message.chat.id
@@ -458,12 +482,21 @@ def deadlines(message):
         bot.send_message(chat_id, "You have no tasks saved.")
 
     elif tasks_collection.count_documents({'chat_id': chat_id, "done": False}) == 0:
-        bot.send_message(message.chat.id, "You've finished all your duties for today! Well done😎", parse_mode="Markdown")
-        sticker = stickers[random.randint(0, len(stickers)-1)]
-        bot.send_sticker(message.chat.id, sticker)
+        if not choose_mode:
+            bot.send_message(message.chat.id, "You've finished all your duties for today! Well done😎", parse_mode="Markdown")
+            sticker = stickers[random.randint(0, len(stickers)-1)]
+            bot.send_sticker(message.chat.id, sticker)
+        else:
+            bot.send_message(message.chat.id, "No undone tasks for now! Well done😎",
+                             parse_mode="Markdown")
+            sticker = stickers[random.randint(0, len(stickers) - 1)]
+            bot.send_sticker(message.chat.id, sticker)
+
+            return 0
 
     else:
-        bot.send_message(message.chat.id, "⏳ Here are your upcoming deadlines!", parse_mode="Markdown")
+        if not choose_mode:
+            bot.send_message(message.chat.id, "⏳ Here are your upcoming deadlines!", parse_mode="Markdown")
 
         button_done = telebot.types.InlineKeyboardButton(text="Mark as done",
                                                          callback_data=f'mark_as_done|{1}') #if deadline_flag = 1, buttons "edit" and "delete" won't be shown
@@ -483,72 +516,66 @@ def deadlines(message):
             now = datetime.datetime.now()
 
             if deadline >= datetime.datetime.today() - datetime.timedelta(hours=now.hour) - datetime.timedelta(minutes=now.minute) - datetime.timedelta(minutes=1) and not done:
+                print(1)
                 response = (
                     f"📌 *{task_name}*\n"
                     f"📝 {description}\n"
                     f"⏰ {humanize.naturaldate(deadline).capitalize()}\n"
                 )
-                if not done:
-                    response += (f"✖ Not done\n")
-                    keyboard.add(button_done)
+                if not choose_mode:
+                    if not done:
+                        response += (f"✖ Not done\n")
+                        keyboard.add(button_done)
+                    else:
+                        response += (f"✅ Done!\n")
+                        keyboard.add(button_undone)
                 else:
-                    response += (f"✅ Done!\n")
-                    keyboard.add(button_undone)
+                    button_choose = telebot.types.InlineKeyboardButton(text="Choose",
+                                                                       callback_data=f'set_notification|{task_name}')
+                    keyboard.add(button_choose)
 
                 bot.send_message(chat_id, response, parse_mode="Markdown", reply_markup=keyboard)
 
+        return 1
 
 
 
+# ----------------------------------------
+# Section for NOTIFICATIONS
+# ----------------------------------------
+@bot.message_handler(commands=['set_reminder'])
+def list_tasks_for_notification(message):
+    chat_id = message.chat.id
 
-#Section for NOTIFICATIONS
-@bot.message_handler(commands=["setreminder"])
-def set_reminder(message):
-    bot.reply_to(message, "Please enter the task ID for which you want to set a reminder:")
-    bot.register_next_step_handler(message, ask_for_reminder_time)
+    tasks = deadlines(message, 1)
+    if tasks:
+        bot.send_message(chat_id, "Choose the task that needs a notification")
 
-def ask_for_reminder_time(message):
-    try:
-        task_name = message.text
-        user_id = message.from_user.id
-        task = tasks_collection.find_one({"task_name": task_name, "user_id": user_id})
-        if task:
-            bot.reply_to(message, "Please enter the reminder time in the format HH:MM (24-hour format):")
+@bot.callback_query_handler(func=lambda call: call.data.startswith('set_notification'))
+def get_notification_time(call):
+    _, task_name = call.data.split("|")
+    chat_id = call.message.chat.id
+    bot.send_message(chat_id, "Enter the time in format pay <code>HH.MM</code>\ne.g. 12.35", parse_mode="HTML")
+    bot.register_next_step_handler(call.message, get_notification_time, task_name)
 
-            bot.register_next_step_handler(message, save_reminder, task_name)
+def get_notification_time(message, task_name):
+    '''creates calendar for user to choose notification time'''
+    global notification_mode
+    notification_mode = 1
 
-        else:
-            bot.reply_to(message, "Task not found or you don't have permission to set a reminder.")
-    except:
-        bot.reply_to(message, "Invalid task ID. Please try again.")
+    global notif_time
+    notif_time = message.text
 
-def save_reminder(message, task_name):
-    reminder_time = message.text
-    try:
-        # Validate the time format
-        time.strptime(reminder_time, "%H:%M")
-        tasks_collection.update_one({"task_name": task_name}, {"$set": {"reminder": reminder_time}})
-        bot.reply_to(message, f"Reminder set for {reminder_time}.")
+    chat_id = message.chat.id
+    now = datetime.datetime.now()
+    calendar, step = DetailedTelegramCalendar(current_date = datetime.date(now.year, now.month, now.day), min_date=datetime.date(now.year, now.month, now.day)).build()
 
-        # Schedule the notification
-        schedule_notification(task_name, reminder_time, message.chat.id)
+    bot.send_message(chat_id,
+                     f"Select {LSTEP[step]}",
+                     reply_markup=calendar)
 
-    except ValueError:
-        bot.reply_to(message, "Invalid time format. Please use HH:MM (24-hour format).")
-
-def schedule_notification(task_name, reminder_time, chat_id):
-
-    def send_reminder():
-        task = tasks_collection.find_one({"task_name": task_name})
-
-
-        if task:
-
-            bot.send_message(chat_id, f"Reminder: Don't forget to complete your task: {task['description']}")
-
-    # Schedule the reminder
-
-    schedule.every().day.at(reminder_time).do(send_reminder)
+def send_notification(chat_id, task_name):
+    bot.send_message(chat_id, f"Don't forget to complete your duties for today: \"{task_name}\" is waiting!")
 
 
 bot.polling(none_stop=True, interval=0)
