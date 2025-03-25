@@ -16,6 +16,7 @@ import asyncio
 import multiprocessing
 from notifiers import get_notifier
 import threading
+import redis
 
 
 
@@ -54,6 +55,7 @@ bot = telebot.TeleBot(token)
 user_data = {}
 notification_mode = 0
 notif_time = ""
+notif_task = ""
 
 
 user_data = {}
@@ -94,7 +96,7 @@ def handle_menu(message):
         view_tasks(message, 0)
     elif message.text == "⏰ Deadlines" or message.text == "/deadlines":
         deadlines(message)
-    elif message.text == "🔔  Manage notifications" or message.text == "/notifications":
+    elif message.text == "🔔 Manage notifications" or message.text == "/notifications":
         list_tasks_for_notification(message)
     else:
         bot.reply_to(message, "❌ Invalid option. Please select from the menu below:", reply_markup=create_menu_keyboard())
@@ -152,6 +154,7 @@ def save_task_description(message):
 def get_task_deadline(message):
     '''creates a calendar for user to choose deadline. the calendar is edited 2 times for month and year selection'''
 
+    global notification_mode
     notification_mode = 0
 
     chat_id = message.chat.id
@@ -188,6 +191,8 @@ def edit_calendar(call):
             delay = (datetime.datetime.combine(deadline, notification_time) - datetime.datetime.combine(
                     datetime.datetime.today(), now)).seconds
 
+            
+            #send_notification.apply_async(args=[chat_id, task_name], countdown=delay)
             threading.Timer(delay, send_notification, args=[chat_id, "-"]).start()
 
             bot.send_message(call.message.chat.id, f"Notification scheduled. You will receive a message at {notification_time.hour:02d}:{notification_time.minute:02d}.")
@@ -565,6 +570,9 @@ def get_notification_time(message, task_name):
 
     global notif_time
     notif_time = message.text
+
+    global notif_task
+    notif_task = task_name
 
     chat_id = message.chat.id
     now = datetime.datetime.now()
