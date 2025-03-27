@@ -1,7 +1,7 @@
 ## Task Tracker Bot
 
-This is a Telegram bot aimed to help you manage your duties effectively and comfortably! \n
-It is created with **telebot** library, using datetime, threading, and MongoDB as a database.\n
+This is a Telegram bot aimed to help you manage your duties effectively and comfortably!\
+It is created with **telebot** library, using datetime, threading, and MongoDB as a database.\
 You can test it via this [link](https://web.telegram.org/k/#@TTTaskTTTracker_bot) and write me in [Telegram](https://t.me/asfedoriako) if you have any suggestions or ideas!
 
 ## Creating tasks
