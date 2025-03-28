@@ -13,17 +13,23 @@ from bson.objectid import ObjectId
 
 """
 VARIABLES:
-    user_data - a global dictionary that carries task_name, task_description, deadline and the status (done/undone) of the task
-    task_collection - global database with info about tasks of all users
+    client - a client for local mongo database
+    db - database, where tasks are stored
+    tasks_collection - section of db, where tasks are stored
+    
+    token - a unique token for connection with bot
     bot - an interface, used to send messsages, edit them and proceed user input
-
+    user_data - a global dictionary that carries task_name, task_description, deadline and the status (done/undone) of the task
+    
+    notification_mode - a flag, which defines whether to save task or to set a deadline for it. needed for function 'edit_calendar'
+    notif_time - a global var, which carries the time of notification, which is going to be set
+    notif_id - a global var, which carries the id of notification, which is going to be set
+    
     message - an argument for reply functions that carry the message itself and its details: id, text
     chat_id - ID of the current chat with the specific user. It is used to send messages. (chat_id = message.chat.id)
     call - an argument for functions that are bound to inline buttons. works as message for commands
-
-FUNCTIONS:
-
-
+    
+    stickers - list with stickers' IDs, which are sent when user completed all the tasks
 """
 
 stickers = ['CAACAgIAAxkBAAIKgWfbO4oF66Obk9V2H8NPNE3VqZnzAAKCIgACCV4RSBYu-QxJ3nfYNgQ',
@@ -42,28 +48,31 @@ tasks_collection = db["tasks4"]
 token = secrets.TOKEN
 bot = telebot.TeleBot(token)
 user_data = {}
+
 notification_mode = 0
 notif_time = ""
 notif_task = ""
 
 
 def send_notification(chat_id, task_id):
+    '''sends a message-notification about a task to user, defined by chat_id'''
+
     task_name = tasks_collection.find_one({"_id": ObjectId(task_id)})["task_name"]
-    bot.send_message(chat_id, f"Don't forget to complete your duties for today: \"{task_name}\" is waiting!")
+    bot.send_message(chat_id, f"\"{task_name}\" is waiting! Don't forget to complete it")
 
     notif_list = tasks_collection.find_one({"_id": ObjectId(task_id)})["notifications"]
     if len(notif_list):
         notif_list.pop(0)
-    print("edited list:", notif_list)
 
     tasks_collection.find_one_and_update({"_id": ObjectId(task_id)}, {'$set': {"notifications": notif_list}},
                                          return_document=ReturnDocument.AFTER)
 
-    print("NOTIF SENT")
-    start_notification_thread(1)
+    #start_notification_thread()
 
 
-def start_notification_thread(mode=0):
+def start_notification_thread():
+    '''this func is called just after starting the bot. it goes through list of notifications and sets timers for them'''
+
     for task in tasks_collection.find():
         # tasks_collection.find_one_and_update({"task_name": task["task_name"]}, {"$set": {"notifications": []}})
 
@@ -72,14 +81,8 @@ def start_notification_thread(mode=0):
             delay = (notification - datetime.datetime.combine(
                 datetime.datetime.today(), now)).seconds
 
-            if not mode:
-                threading.Timer(delay, send_notification, args=[task["chat_id"], task["_id"]]).start()
 
-            print(task["task_name"])
-            try:
-                print(" " * 4, notification)
-            except:
-                pass
+            threading.Timer(delay, send_notification, args=[task["chat_id"], task["_id"]]).start()
 
 
 start_notification_thread()
@@ -197,6 +200,7 @@ def save_task_description(message):
 def get_task_deadline(message):
     '''creates a calendar for user to choose deadline. the calendar is edited 2 times for month and year selection'''
 
+    global notification_mode
     notification_mode = 0
 
     chat_id = message.chat.id
@@ -246,7 +250,6 @@ def edit_calendar(call):
                 datetime.datetime.today(), now)).seconds
 
             print("got an id:", notif_task)
-            print(tasks_collection.find_one({"_id": ObjectId(notif_task)}))
 
             notification_list = tasks_collection.find_one({"_id": ObjectId(notif_task)})["notifications"]
             notification_list.append(datetime.datetime.combine(notification_day, notification_time))
@@ -664,12 +667,11 @@ def get_notification_day(message, task_id):
                      reply_markup=calendar)
 
 
-bot.polling(none_stop=True, interval=0)
-# while True:
-#     try:
-#         bot.polling(none_stop=True, interval=0)
-#     except Exception as e:
-#         print("Exception occured at time:")
-#         now = datetime.datetime.now()
-#         print(now)
-#         print(e)
+while True:
+    try:
+        bot.polling(none_stop=True, interval=0)
+    except Exception as e:
+        print("Exception occured at time:")
+        now = datetime.datetime.now()
+        print(now)
+        print(e)
