@@ -84,6 +84,7 @@ def start_notification_thread(mode=0):
 
 start_notification_thread()
 
+
 def not_too_late(message):
     '''checks if the message was sent at most 1 minute ago. needed to prevent bot from answering to messages, which were sent when
     bot was offline'''
