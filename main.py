@@ -58,7 +58,7 @@ def send_notification(chat_id, task_id):
     '''sends a message-notification about a task to user, defined by chat_id'''
 
     task_name = tasks_collection.find_one({"_id": ObjectId(task_id)})["task_name"]
-    bot.send_message(chat_id, f"➡️\"{task_name}\" is waiting! It's time to complete it")
+    bot.send_message(chat_id, f"\"{task_name}\" is waiting! It's time to complete it")
 
     notif_list = tasks_collection.find_one({"_id": ObjectId(task_id)})["notifications"]
     if len(notif_list):
