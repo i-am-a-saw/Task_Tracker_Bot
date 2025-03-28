@@ -9,6 +9,7 @@ import random
 import secrets
 import threading
 import time
+from bson.objectid import ObjectId
 
 """
 VARIABLES:
@@ -46,15 +47,16 @@ notif_time = ""
 notif_task = ""
 
 
-def send_notification(chat_id, task_name):
+def send_notification(chat_id, task_id):
+    task_name = tasks_collection.find_one({"_id": ObjectId(task_id)})["task_name"]
     bot.send_message(chat_id, f"Don't forget to complete your duties for today: \"{task_name}\" is waiting!")
 
-    notif_list = tasks_collection.find_one({"task_name": task_name})["notifications"]
+    notif_list = tasks_collection.find_one({"_id": ObjectId(task_id)})["notifications"]
     if len(notif_list):
         notif_list.pop(0)
     print("edited list:", notif_list)
 
-    tasks_collection.find_one_and_update({"task_name": task_name}, {'$set': {"notifications": notif_list}},
+    tasks_collection.find_one_and_update({"_id": ObjectId(task_id)}, {'$set': {"notifications": notif_list}},
                                          return_document=ReturnDocument.AFTER)
 
     print("NOTIF SENT")
@@ -71,7 +73,7 @@ def start_notification_thread(mode=0):
                 datetime.datetime.today(), now)).seconds
 
             if not mode:
-                threading.Timer(delay, send_notification, args=[task["chat_id"], task["task_name"]]).start()
+                threading.Timer(delay, send_notification, args=[task["chat_id"], task["_id"]]).start()
 
             print(task["task_name"])
             try:
@@ -159,6 +161,12 @@ def save_task_name(message):
 
     chat_id = message.chat.id
     user_data[chat_id] = {}  # in this dict the task will be saved
+
+    if "." in message.text:
+        bot.send_message(chat_id, "Sorry, try again")
+        bot.register_next_step_handler(add_task(message))
+        return
+
     user_data[chat_id]['task_name'] = message.text
 
     button_cancel = telebot.types.InlineKeyboardButton(text="Cancel creating",
@@ -187,6 +195,8 @@ def save_task_description(message):
 
 def get_task_deadline(message):
     '''creates a calendar for user to choose deadline. the calendar is edited 2 times for month and year selection'''
+
+    notification_mode = 0
 
     chat_id = message.chat.id
     now = datetime.datetime.now()
@@ -234,14 +244,17 @@ def edit_calendar(call):
             delay = (datetime.datetime.combine(notification_day, notification_time) - datetime.datetime.combine(
                 datetime.datetime.today(), now)).seconds
 
-            notification_list = tasks_collection.find_one({"task_name": notif_task})["notifications"]
+            print("got an id:", notif_task)
+            print(tasks_collection.find_one({"_id": ObjectId(notif_task)}))
+
+            notification_list = tasks_collection.find_one({"_id": ObjectId(notif_task)})["notifications"]
             notification_list.append(datetime.datetime.combine(notification_day, notification_time))
             notification_list.sort()
             print(notification_list)
-            tasks_collection.find_one_and_update({"task_name": notif_task},
+            tasks_collection.find_one_and_update({"_id": ObjectId(notif_task)},
                                                  {'$set': {"notifications": notification_list}},
                                                  return_document=ReturnDocument.AFTER)
-            print(tasks_collection.find_one({"task_name": notif_task})["notifications"])
+            print(tasks_collection.find_one({"_id": ObjectId(notif_task)})["notifications"])
 
             # send_notification.apply_async(args=[chat_id, task_name], countdown=delay)
             threading.Timer(delay, send_notification, args=[chat_id, notif_task]).start()
@@ -574,7 +587,8 @@ def deadlines(message, choose_mode=0):
         for task in tasks:
             keyboard = telebot.types.InlineKeyboardMarkup()
 
-            # task_id = task["_id"]
+            task_id = task["_id"]
+            print("ID:", task_id)
             task_name = task['task_name']
             description = task['description']
             done = task['done']
@@ -600,7 +614,7 @@ def deadlines(message, choose_mode=0):
                         keyboard.add(button_undone)
                 else:
                     button_choose = telebot.types.InlineKeyboardButton(text="Choose",
-                                                                       callback_data=f'set_notification|{task_name}')
+                                                                       callback_data=f'set_notif|{task_id}') # s_n = set_notification. contraction is used to prevent error 400 linked with long data for buttons
                     keyboard.add(button_choose)
 
                 bot.send_message(chat_id, response, parse_mode="Markdown", reply_markup=keyboard)
@@ -620,15 +634,15 @@ def list_tasks_for_notification(message):
         bot.send_message(chat_id, "Choose the task that needs a notification")
 
 
-@bot.callback_query_handler(func=lambda call: call.data.startswith('set_notification'))
+@bot.callback_query_handler(func=lambda call: call.data.startswith('set_notif'))
 def get_notification_time(call):
-    _, task_name = call.data.split("|")
+    _, task_id = call.data.split("|")
     chat_id = call.message.chat.id
     bot.send_message(chat_id, "Enter the time in format <code>HH.MM</code>\ne.g. 12.35", parse_mode="HTML")
-    bot.register_next_step_handler(call.message, get_notification_day, task_name)
+    bot.register_next_step_handler(call.message, get_notification_day, task_id)
 
 
-def get_notification_day(message, task_name):
+def get_notification_day(message, task_id):
     '''creates calendar for user to choose notification time'''
     global notification_mode
     notification_mode = 1
@@ -637,7 +651,7 @@ def get_notification_day(message, task_name):
     notif_time = message.text
 
     global notif_task
-    notif_task = task_name
+    notif_task = task_id
 
     chat_id = message.chat.id
     now = datetime.datetime.now()
@@ -650,3 +664,11 @@ def get_notification_day(message, task_name):
 
 
 bot.polling(none_stop=True, interval=0)
+# while True:
+#     try:
+#         bot.polling(none_stop=True, interval=0)
+#     except Exception as e:
+#         print("Exception occured at time:")
+#         now = datetime.datetime.now()
+#         print(now)
+#         print(e)
