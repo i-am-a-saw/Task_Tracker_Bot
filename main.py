@@ -60,7 +60,7 @@ vip_stickers = ['CAACAgIAAxkBAAI2sGfqtPxMuyCiVwteriLPxUbBc96XAAI0awACzZcZSC9V1Ww
 
 time_zone = "Europe/Moscow"
 
-client = pymongo.MongoClient("mongodb://nick_gay:g5e*(h.5Y@193.233.84.102:63852/mydatabase")  # mongodb://your_username:your_password@remote_server_ip:27017/your_database_name
+client = pymongo.MongoClient("###")  # mongodb://your_username:your_password@remote_server_ip:27017/your_database_name
 db = client["mydatabase"]
 tasks_collection = db["tasks4"]
 
@@ -76,7 +76,6 @@ review_hour = 0
 review_minute = 5
 
 IDs = ["1226646270", "1615057164", "897817045" ,"1948432640", "1638334330"]
-       #julia
 
 def check_missed_deadlines():
     '''once a day this func checks all deadlines. if deadline is skipped, the status is changed to "missed"'''
@@ -87,11 +86,12 @@ def check_missed_deadlines():
             tasks = tasks_collection.find({})
 
             for task in tasks:
-                print(task["task_name"])
+                #print(task["task_name"])
                 deadline = datetime.datetime.combine(task["deadline"], datetime.datetime.now(pytz.timezone(time_zone)).time())
                 status = task["status"]
 
-                if deadline < now and status == "not done":
+                if deadline.date() < now.date() and status == "not done":
+                    #print("missed", task["task_name"])
                     tasks_collection.find_one_and_update({"_id": task["_id"]}, {"$set": {"status": "missed"}})
                     bot.send_message(task["chat_id"], f"You've missed your deadline for \"{task['task_name']}\" 😔\nTry to manage your time properly!")
 
@@ -122,11 +122,11 @@ def start_notification_thread():
                         int(notif.hour) == int(now.hour) and
                         int(notif.minute) == int(now.minute)):
 
-                    bot.send_message("1638334330", "THIS IS IT")
+                    # bot.send_message("1638334330", "THIS IS IT")
                     bot.send_message(task["chat_id"], f"\"{task["task_name"]}\" is waiting! It's time to complete it")
 
-                    bot.send_message("1638334330",
-                                     f"message has just been sent, text is about {task["task_name"]}")
+                    # bot.send_message("1638334330",
+                    #                  f"message has just been sent, text is about {task["task_name"]}")
 
                     notif_list = task["notifications"]
                     notif_list.pop(0)
@@ -134,23 +134,11 @@ def start_notification_thread():
                                                          {'$set': {"notifications": notif_list}},
                                                          return_document=ReturnDocument.AFTER)
 
-                    bot.send_message("1638334330",
-                                     f"message has been sent to {task["chat_id"]}, text is about {task["task_name"]}")
+                    # bot.send_message("1638334330",
+                    #                  f"message has been sent to {task["chat_id"]}, text is about {task["task_name"]}")
 
 
         time.sleep(20)
-
-
-    # for task in tasks_collection.find({}):
-    #     # tasks_collection.find_one_and_update({"task_name": task["task_name"]}, {"$set": {"notifications": []}})
-    #
-    #     for notification in task["notifications"]:
-    #         now = datetime.datetime.now(pytz.timezone(time_zone)).time()
-    #         delay = (notification - datetime.datetime.combine(
-    #             datetime.datetime.today(), now)).seconds
-    #
-    #
-    #         threading.Timer(delay, send_notification, args=[task["chat_id"], task["_id"]]).start()
 
 
 def not_too_late(message):
@@ -194,15 +182,13 @@ def send_sticker_id(message):
 
 @bot.message_handler(func=lambda message: True)
 def handle_menu(message):
-    print(message.message_id, message.chat.id)
-    now = datetime.datetime.now(pytz.timezone("Europe/Moscow"))
-    #bot.send_message("1638334330", f"{now}")
-    #bot.send_message("1638334330", f"{now.strftime("%Y:%m:%d %H:%M:%S %Z %z")}")
-    #bot.delete_message(chat_id="1638334330", message_id="")
     '''replies to text commands, sent by user. if command is not recognizes, asks to select command from menu'''
 
+    # print(message.message_id, message.chat.id)
+    now = datetime.datetime.now(pytz.timezone("Europe/Moscow"))
+
     if not_too_late(message):
-        if message.text == "/send":
+        if message.text == "/send" and message.chat.id == "1638334330":
             data = {}
             get_user(message, data)
         elif message.text == "/timur_govnoed":
@@ -231,6 +217,10 @@ def handle_menu(message):
                          reply_markup=create_menu_keyboard())
 
 
+
+# ----------------------------------------
+# Section for EMERGENCY MESSAGES
+# ----------------------------------------
 def get_user(message, data):
     bot.send_message("1638334330", "Enter the user ID")
     bot.register_next_step_handler(message, get_msg, data)
@@ -402,6 +392,7 @@ def cancel_creation(call):
     bot.clear_step_handler(call.message)
 
 
+
 # ----------------------------------------
 # Section for VIEWING TASKS
 # ----------------------------------------
@@ -537,6 +528,7 @@ def mark_as_undone(call):
 @bot.callback_query_handler(func=lambda call: call.data == 'edit_task')
 def edit_task(call):
     '''asks the user, what would they like to change in task: name, description or deadline'''
+
     message = call.message
     chat_id = message.chat.id
     message_id = message.message_id
@@ -615,6 +607,7 @@ def update_task_deadline(message, task_name):
 @bot.callback_query_handler(func=lambda call: call.data == 'delete_task')
 def delete_task(call):
     '''asks the user whether they wanna delete the task and then proceeds to the choice'''
+
     message = call.message
     chat_id = message.chat.id
 
@@ -639,6 +632,8 @@ def delete_task(call):
 
 @bot.callback_query_handler(func=lambda call: call.data.startswith('confirm_deletion'))
 def confirm_deletion(call):
+    '''deletes a task after making sure that the user really wanna delete it'''
+
     message = call.message
     chat_id = message.chat.id
 
@@ -658,6 +653,7 @@ def cancel_deletion(call):
     _, message_id = call.data.split("|")
 
     bot.delete_message(chat_id, call.message.message_id)
+
 
 
 # ----------------------------------------
@@ -741,6 +737,8 @@ def deadlines(message, choose_mode=0):
 # ----------------------------------------
 @bot.message_handler(commands=['set_reminder'])
 def list_tasks_for_notification(message):
+    '''creates a list of task. user then chooses one that needs a notification'''
+
     chat_id = message.chat.id
 
     tasks = deadlines(message, 1)
@@ -750,6 +748,8 @@ def list_tasks_for_notification(message):
 
 @bot.callback_query_handler(func=lambda call: call.data.startswith('set_notif'))
 def get_notification_time(call):
+    '''asks user for time when notification needs to be sent'''
+
     _, task_id = call.data.split("|")
     chat_id = call.message.chat.id
     bot.send_message(chat_id, "Enter the time in format <code>HH.MM</code>\ne.g. 12.35", parse_mode="HTML")
@@ -758,6 +758,7 @@ def get_notification_time(call):
 
 def get_notification_day(message, task_id):
     '''creates calendar for user to choose notification time'''
+
     global notification_mode
     notification_mode = 1
 
@@ -776,14 +777,16 @@ def get_notification_day(message, task_id):
                      f"Select {LSTEP[step]}",
                      reply_markup=calendar)
 
-#start_notification_thread()
 
+# the main loop, where bot is started, missed deadlines are checked and notifications are sent
 while True:
     try:
         thread_notifications = threading.Thread(target=start_notification_thread)
         thread_deadlines = threading.Thread(target=check_missed_deadlines)
+
         thread_deadlines.start()
         thread_notifications.start()
+
         bot.polling(none_stop=True, interval=0)
     except Exception as e:
         print("Exception occured at time:")
